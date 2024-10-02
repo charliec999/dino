@@ -78,6 +78,7 @@ difficulty_increase_rate = 0.01
 
 score_label = pyglet.text.Label('0', x=10, y=370, font_size=18, color=(255, 255, 255, 255), batch=batch)
 generation_label = pyglet.text.Label(f'Gen: {generation}', x=700, y=370, font_size=18, color=(255, 255, 255, 255), batch=batch)
+nn_info_label = pyglet.text.Label('', x=10, y=350, font_size=16, color=(255, 255, 0, 255), batch=batch)
 
 def reset_game():
     global dino, cacti, score, game_over, game_speed
@@ -133,6 +134,7 @@ def update(dt):
             (cacti[0].sprite.height - dino.sprite.height) / 60,
             dino.y_velocity / 15
         ]
+        nn_info_label.text = f'Inputs: {inputs}, Prediction: {networks[current_network].predict(inputs)}'
         if networks[current_network].predict(inputs):
             dino.jump()
 
@@ -148,7 +150,10 @@ def on_key_press(symbol, modifiers):
     global fullscreen
     if symbol == pyglet.window.key.F:
         fullscreen = not fullscreen
-        window.set_fullscreen(fullscreen, width=window.width, height=window.height)
+        if fullscreen:
+            window.set_fullscreen(True)
+        else:
+            window.set_fullscreen(False)
 
 pyglet.clock.schedule_interval(update, 1/120)
 pyglet.app.run()
