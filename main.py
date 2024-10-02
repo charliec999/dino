@@ -1,67 +1,72 @@
 import pyglet
 import numpy as np
 import random
+from collections import deque
 import tensorflow as tf
-from pyglet.window import key
 
-window_width = 800
-window_height = 400
-ground_y = 130
-dino_color = (0, 128, 0)
-cactus_color = (139, 0, 0)
-ground_color = (139, 69, 19)
-sky_color = (135 / 255, 206 / 255, 235 / 255, 1)
+# Constants
+WINDOW_WIDTH, WINDOW_HEIGHT = 800, 600
+GROUND_Y = 100
+COLORS = {
+    'dino': (0, 128, 0),
+    'cactus': (139, 0, 0),
+    'ground': (139, 69, 19),
+    'sky': (135, 206, 235),
+    'text': (255, 255, 255),
+    'node': (255, 0, 0)
+}
 
 class Dino:
     def __init__(self):
-        self.x = 100
-        self.y = ground_y
-        self.width = 20
-        self.height = 40
+        self.x, self.y = 50, GROUND_Y
+        self.width, self.height = 40, 60
+        self.jump_velocity = 0
+        self.gravity = -0.8
         self.is_jumping = False
-        self.jump_speed = 0
-        self.gravity = 1
 
     def jump(self):
         if not self.is_jumping:
+            self.jump_velocity = 15
             self.is_jumping = True
-            self.jump_speed = 20
 
     def update(self):
         if self.is_jumping:
-            self.y += self.jump_speed
-            self.jump_speed -= self.gravity
-            if self.y <= ground_y:
-                self.y = ground_y
+            self.y += self.jump_velocity
+            self.jump_velocity += self.gravity
+            if self.y <= GROUND_Y:
+                self.y = GROUND_Y
                 self.is_jumping = False
+                self.jump_velocity = 0
 
-class Cactus:
-    def __init__(self):
-        self.x = window_width
-        self.y = ground_y
-        self.width = 20
-        self.height = 40
+class Obstacle:
+    def __init__(self, x):
+        self.x = x
+        self.y = GROUND_Y
+        self.width = random.randint(20, 40)
+        self.height = random.randint(40, 80)
 
     def update(self, speed):
         self.x -= speed
 
 class DQNAgent:
-    def __init__(self):
-        self.state_size = 4
-        self.action_size = 2
-        self.memory = []
+    def __init__(self, state_size, action_size):
+        self.state_size = state_size
+        self.action_size = action_size
+        self.memory = deque(maxlen=2000)
         self.gamma = 0.95
         self.epsilon = 1.0
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.995
+        self.learning_rate = 0.001
         self.model = self._build_model()
 
     def _build_model(self):
-        model = tf.keras.Sequential()
-        model.add(tf.keras.layers.Dense(24, input_dim=self.state_size, activation='relu'))
-        model.add(tf.keras.layers.Dense(24, activation='relu'))
-        model.add(tf.keras.layers.Dense(self.action_size, activation='linear'))
-        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=0.001))
+        model = tf.keras.Sequential([
+            tf.keras.layers.Dense(24, activation='relu', input_shape=(self.state_size,)),
+            tf.keras.layers.Dense(24, activation='relu'),
+            tf.keras.layers.Dense(self.action_size, activation='linear')
+        ])
+        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate))
         return model
 
     def remember(self, state, action, reward, next_state, done):
@@ -74,119 +79,133 @@ class DQNAgent:
         return np.argmax(act_values[0])
 
     def replay(self, batch_size):
-        if len(self.memory) < batch_size:
-            return
         minibatch = random.sample(self.memory, batch_size)
         for state, action, reward, next_state, done in minibatch:
             target = reward
             if not done:
-                target = reward + self.gamma * np.amax(self.model.predict(next_state, verbose=0)[0])
+                target += self.gamma * np.amax(self.model.predict(next_state, verbose=0)[0])
             target_f = self.model.predict(state, verbose=0)
             target_f[0][action] = target
             self.model.fit(state, target_f, epochs=1, verbose=0)
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
-class Game:
+class Game(pyglet.window.Window):
     def __init__(self):
-        self.window = pyglet.window.Window(window_width, window_height)
+        super().__init__(WINDOW_WIDTH, WINDOW_HEIGHT, "Dino AI", resizable=True)
+        self.batch = pyglet.graphics.Batch()
         self.dino = Dino()
-        self.cacti = []
-        self.agent = DQNAgent()
+        self.obstacles = []
+        self.speed = 5
         self.score = 0
-        self.game_speed = 5
+        self.high_score = 0
+        self.attempts = 0
+        self.game_over = False
+        self.frame_count = 0
+        self.difficulty_increment = 0.001
+        self.state_size = 4
+        self.action_size = 2
+        self.agent = DQNAgent(self.state_size, self.action_size)
         self.batch_size = 32
-        self.frames_since_action = 0
-        self.max_cacti = 5  # Limit the number of cacti on screen
-        pyglet.clock.schedule_interval(self.update, 1 / 120)
+        pyglet.clock.schedule_interval(self.update, 1/60.0)
 
     def on_draw(self):
-        self.window.clear()
-        pyglet.gl.glClearColor(*sky_color)
+        self.clear()
+        pyglet.gl.glClearColor(*COLORS['sky'], 1)
+        self.batch.draw()
         self.draw_ground()
         self.draw_dino()
-        for cactus in self.cacti:
-            self.draw_cactus(cactus)
-        score_label = pyglet.text.Label(f'Score: {self.score}', font_size=20, x=10, y=window_height - 30)
-        score_label.draw()
+        self.draw_obstacles()
+        self.draw_ui()
 
     def draw_ground(self):
-        pyglet.graphics.draw(4, pyglet.gl.GL_QUADS,
-            ('v2f', [0, ground_y, window_width, ground_y, window_width, 0, 0, 0]),
-            ('c3B', ground_color * 4)
-        )
+        pyglet.shapes.Rectangle(0, 0, self.width, GROUND_Y, color=COLORS['ground'], batch=self.batch).draw()
 
     def draw_dino(self):
-        pyglet.graphics.draw(4, pyglet.gl.GL_QUADS,
-            ('v2f', [self.dino.x, self.dino.y, self.dino.x + self.dino.width, self.dino.y,
-                      self.dino.x + self.dino.width, self.dino.y + self.dino.height, self.dino.x, self.dino.y + self.dino.height]),
-            ('c3B', dino_color * 4)
-        )
+        pyglet.shapes.Rectangle(self.dino.x, self.dino.y, self.dino.width, self.dino.height, color=COLORS['dino'], batch=self.batch).draw()
 
-    def draw_cactus(self, cactus):
-        pyglet.graphics.draw(4, pyglet.gl.GL_QUADS,
-            ('v2f', [cactus.x, cactus.y, cactus.x + cactus.width, cactus.y,
-                      cactus.x + cactus.width, cactus.y + cactus.height, cactus.x, cactus.y + cactus.height]),
-            ('c3B', cactus_color * 4)
-        )
+    def draw_obstacles(self):
+        for obstacle in self.obstacles:
+            pyglet.shapes.Rectangle(obstacle.x, obstacle.y, obstacle.width, obstacle.height, color=COLORS['cactus'], batch=self.batch).draw()
+        if self.obstacles:
+            obstacle = self.obstacles[0]
+            node_x = (self.dino.x + self.dino.width + obstacle.x) / 2
+            node_y = (self.dino.y + obstacle.y + obstacle.height) / 2
+            pyglet.shapes.Circle(node_x, node_y, 5, color=COLORS['node'], batch=self.batch).draw()
+
+    def draw_ui(self):
+        pyglet.text.Label(f"Score: {self.score}", x=10, y=self.height - 30, color=(255, 255, 255, 255), batch=self.batch).draw()
+        pyglet.text.Label(f"High Score: {self.high_score}", x=10, y=self.height - 60, color=COLORS['text'], batch=self.batch).draw()
+        pyglet.text.Label(f"Attempts: {self.attempts}", x=10, y=self.height - 90, color=COLORS['text'], batch=self.batch).draw()
 
     def update(self, dt):
+        self.frame_count += 1
+        if self.game_over:
+            return
         self.dino.update()
-        
-        # Only predict and act every 5 frames
-        self.frames_since_action += 1
-        if self.frames_since_action >= 5:
-            self.learn()
-            self.frames_since_action = 0
-        
-        # Limit cactus spawning frequency
-        if len(self.cacti) < self.max_cacti and random.random() < 0.05:  # Adjust the probability
-            self.cacti.append(Cactus())
-        
-        for cactus in self.cacti:
-            cactus.update(self.game_speed)
-            if cactus.x < -cactus.width:
-                self.cacti.remove(cactus)
-                self.score += 1
-            if self.check_collision(cactus):
-                self.reset_game()
-                break
+        state = self.get_state()
+        action = self.agent.act(state)
+        if action == 1:
+            self.dino.jump()
+        self.speed += self.difficulty_increment
+        self.update_obstacles()
+        self.check_collisions(state, action)
+        self.score += 1
+        self.agent.remember(state, action, 0.1, self.get_state(), False)
+        self.train_agent()
 
-    def check_collision(self, cactus):
-        return (self.dino.x < cactus.x + cactus.width and
-                self.dino.x + self.dino.width > cactus.x and
-                self.dino.y < cactus.y + cactus.height and
-                self.dino.y + self.dino.height > cactus.y)
+    def update_obstacles(self):
+        for obstacle in self.obstacles:
+            obstacle.update(self.speed)
+        if len(self.obstacles) == 0 or self.obstacles[-1].x < self.width - 200:
+            self.obstacles.append(Obstacle(self.width))
+        self.obstacles = [obs for obs in self.obstacles if obs.x + obs.width > 0]
+
+    def check_collisions(self, state, action):
+        for obstacle in self.obstacles:
+            if self.check_collision(self.dino, obstacle):
+                self.game_over = True
+                self.agent.remember(state, action, -10, self.get_state(), True)
+                self.high_score = max(self.high_score, self.score)
+                self.reset_game()
+                return
+
+    def get_state(self):
+        if self.obstacles:
+            obstacle = self.obstacles[0]
+            return np.array([[
+                self.dino.y / self.height,
+                obstacle.x / self.width,
+                obstacle.width / self.width,
+                self.speed / 20
+            ]])
+        return np.array([[self.dino.y / self.height, 1, 0, self.speed / 20]])
+
+    def check_collision(self, dino, obstacle):
+        return (dino.x < obstacle.x + obstacle.width and
+                dino.x + dino.width > obstacle.x and
+                dino.y < obstacle.y + obstacle.height and
+                dino.y + dino.height > obstacle.y)
 
     def reset_game(self):
-        self.cacti.clear()
+        self.dino = Dino()
+        self.obstacles = []
+        self.speed = 5
         self.score = 0
-        self.dino.y = ground_y
-        self.dino.is_jumping = False
+        self.game_over = False
+        self.attempts += 1
 
-    def learn(self):
-        try:
-            state = np.array([self.dino.y, self.dino.x, len(self.cacti), self.cacti[0].x if self.cacti else window_width])
-            state = np.reshape(state, [1, self.agent.state_size])
-            action = self.agent.act(state)
-
-            if action == 1:
-                self.dino.jump()
-            
-            next_state = np.array([self.dino.y, self.dino.x, len(self.cacti), self.cacti[0].x if self.cacti else window_width])
-            next_state = np.reshape(next_state, [1, self.agent.state_size])
-            
-            if self.cacti:
-                reward = 1 if not self.check_collision(self.cacti[0]) else -10
-            else:
-                reward = 1
-            
-            done = False
-            self.agent.remember(state, action, reward, next_state, done)
+    def train_agent(self):
+        if self.frame_count % 10 == 0 and len(self.agent.memory) >= self.batch_size:
             self.agent.replay(self.batch_size)
-        except Exception as e:
-            print(f"Error in learn method: {e}")
 
-game = Game()
-game.window.push_handlers(on_draw=game.on_draw)
-pyglet.app.run()
+    def on_key_press(self, symbol, modifiers):
+        if symbol == pyglet.window.key.F:
+            self.toggle_fullscreen()
+
+    def toggle_fullscreen(self):
+        self.set_fullscreen(not self.fullscreen)
+
+if __name__ == "__main__":
+    game = Game()
+    pyglet.app.run()
