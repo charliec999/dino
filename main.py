@@ -12,12 +12,12 @@ import json
 import os
 from datetime import datetime
 
-# Constants
+
 WINDOW_WIDTH = 1200
 WINDOW_HEIGHT = 600
 FPS = 60
 
-# Colors
+
 COLORS = {
     'WHITE': (255, 255, 255),
     'BLACK': (0, 0, 0),
@@ -27,17 +27,17 @@ COLORS = {
     'GRAY': (128, 128, 128)
 }
 
-# Game Parameters
+
 GRAVITY = 0.8
 JUMP_SPEED = -15
 INITIAL_GAME_SPEED = 5
 SPEED_INCREMENT = 0.001
 NIGHT_MODE_THRESHOLD = 500
 
-# Neural Network Parameters
+
 STATE_SIZE = 8
 HIDDEN_SIZE = 128
-ACTION_SIZE = 3  # Jump, Duck, Do Nothing
+ACTION_SIZE = 3  
 BATCH_SIZE = 64
 GAMMA = 0.99
 LEARNING_RATE = 0.0001
@@ -47,7 +47,7 @@ EPSILON_START = 1.0
 EPSILON_END = 0.01
 EPSILON_DECAY = 0.9995
 
-# Experience tuple definition
+
 Experience = namedtuple('Experience', ['state', 'action', 'reward', 'next_state', 'done'])
 
 class AdvancedNeuralNetwork(nn.Module):
@@ -88,10 +88,10 @@ class PrioritizedReplayBuffer:
         self.memory = []
         self.priorities = np.zeros(capacity)
         self.position = 0
-        self.alpha = 0.6  # Priority exponent
-        self.beta = 0.4   # Importance sampling weight
+        self.alpha = 0.6  
+        self.beta = 0.4   
         self.beta_increment = 0.001
-        self.epsilon = 1e-5  # Small constant to prevent zero probabilities
+        self.epsilon = 1e-5  
         
     def push(self, experience):
         max_priority = np.max(self.priorities) if self.memory else 1.0
@@ -171,13 +171,13 @@ class AdvancedDQNAgent:
         next_q_values = self.target_net(next_states).max(1)[0].detach()
         expected_q_values = rewards + (1 - dones) * GAMMA * next_q_values
         
-        # Calculate TD errors for priority updating
+        
         td_errors = torch.abs(current_q_values - expected_q_values.unsqueeze(1)).detach().cpu().numpy()
         
-        # Update priorities in buffer
+        
         self.memory.update_priorities(indices, td_errors.squeeze())
         
-        # Calculate loss with importance sampling weights
+        
         loss = (weights.unsqueeze(1) * F.smooth_l1_loss(current_q_values, expected_q_values.unsqueeze(1), reduction='none')).mean()
         
         self.optimizer.zero_grad()
@@ -210,7 +210,7 @@ class Obstacle:
         self.y = y
         self.width = width
         self.height = height
-        self.type = obstacle_type  # 'cactus' or 'bird'
+        self.type = obstacle_type  
         self.passed = False
 
     def update(self, game_speed):
@@ -290,10 +290,10 @@ class Game:
             return np.array([
                 self.dino.y / WINDOW_HEIGHT,
                 self.dino.dy / 20,
-                1.0,  # normalized distance to next obstacle
-                0.0,  # normalized obstacle height
-                0.0,  # normalized obstacle width
-                0.0,  # obstacle type
+                1.0,  
+                0.0,  
+                0.0,  
+                0.0,  
                 self.game_speed / 20,
                 1.0 if self.night_mode else 0.0
             ])
@@ -329,19 +329,19 @@ class Game:
         if collision:
             return -10
         
-        reward = 0.1  # Small positive reward for surviving
+        reward = 0.1  
         
-        # Additional reward for passing obstacles
+        
         for obstacle in self.obstacles:
             if not obstacle.passed and obstacle.x + obstacle.width < self.dino.x:
                 obstacle.passed = True
                 reward += 1
                 
-        # Reward for maintaining safe distance from obstacles
+        
         if self.obstacles:
             next_obstacle = self.obstacles[0]
             distance = next_obstacle.x - (self.dino.x + self.dino.width)
-            if 0 < distance < 200:  # Safe distance range
+            if 0 < distance < 200:  
                 reward += 0.2
                 
         return reward
@@ -349,24 +349,24 @@ class Game:
     def step(self, action):
         self.frame_iteration += 1
         
-        # Handle action
-        if action == 0:  # Jump
+        
+        if action == 0:  
             self.dino.jump()
-        elif action == 1:  # Duck
+        elif action == 1:  
             self.dino.duck()
-        else:  # Do nothing
+        else:  
             self.dino.stop_duck()
             
-        # Update game state
+        
         self.dino.update()
         self._generate_obstacle()
         
-        # Update obstacles
+        
         self.obstacles = [obs for obs in self.obstacles if obs.x + obs.width > 0]
         for obstacle in self.obstacles:
             obstacle.update(self.game_speed)
             
-        # Check collision
+        
         collision = False
         for obstacle in self.obstacles:
             if (self.dino.x < obstacle.x + obstacle.width and
@@ -376,4 +376,4 @@ class Game:
                 collision = True
                 break
                 
-        # Update
+        
